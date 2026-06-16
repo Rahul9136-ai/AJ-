@@ -1,0 +1,25 @@
+# Secrets & local config — NEVER commit these
+.env
+*.key
+*.pem
+
+# Local data / personal state
+workspace/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+
+# Logs / temp
+*.log
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

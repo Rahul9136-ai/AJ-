@@ -1,0 +1,13 @@
+openai>=2.0
+ddgs>=9.0
+streamlit>=1.30
+
+# Documents & export
+pypdf>=4.0                   # read uploaded PDFs
+reportlab>=4.0              # export replies to PDF
+
+# Voice
+streamlit-mic-recorder>=0.0.8  # one-click browser speech-to-text (dashboard)
+SpeechRecognition>=3.10      # speech-to-text fallback (free Google recognizer)
+pyttsx3>=2.90                # text-to-speech (offline, OS voice)
+# pyaudio>=0.2.14            # only needed for CLI --voice mic capture
