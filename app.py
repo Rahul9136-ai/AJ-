@@ -301,7 +301,7 @@ st.markdown(
                     <p class="hero-sub">Your AI assistant · by <b>Purvi Technologies</b></p>
                 </div>
             </div>
-            <span class="pill">⚡ Powered by {config.PROVIDER.title()} · {config.MODEL}</span>
+            <span class="pill">⚡ {config.PROVIDER.title()} · {config.MODEL}{(" ↪ failover: " + ", ".join(config.CHAIN_NAMES[1:])) if len(config.CHAIN_NAMES) > 1 else ""}</span>
         </div>
         """
     ),
@@ -456,11 +456,12 @@ if prompt:
             )
         except openai.RateLimitError:
             ok = False
+            others = ", ".join(config.CHAIN_NAMES[1:]) or "none configured"
             answer = (
-                "⚠️ **Rate limit reached.** The free AI quota is used up for now. "
-                "Each message uses several requests, so the free tier fills quickly.\n\n"
-                "Wait ~30 seconds and try again — or switch to **Groq** for much higher free "
-                "limits (ask me to set it up). You can also slow down between messages."
+                "⚠️ **All AI providers are rate-limited right now.** AJ tried every backup "
+                f"({others}) and they're all out of free quota for the moment.\n\n"
+                "Wait ~30 seconds and try again. To add more headroom, add a **Groq** key "
+                "(free at console.groq.com) — ask me to set it up."
             )
         except openai.APIStatusError as exc:
             ok = False

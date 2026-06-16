@@ -13,20 +13,68 @@ import json
 from dataclasses import dataclass, field
 from typing import Callable, List, Optional
 
+import openai
 from openai import OpenAI
 
-from config import API_KEY, BASE_URL, MAX_TOKENS, MODEL
+import config
 
-# Lazily-built client pointed at the configured OpenAI-compatible provider. Deferred
-# so imports work (CLI help, tests, Streamlit page load) even before the key is set.
-_client: Optional[OpenAI] = None
+# One cached client per provider in the failover chain (built lazily).
+_clients: dict = {}
+
+# Errors that mean "this provider is temporarily unavailable — try the next one".
+_RETRYABLE_STATUS = {408, 409, 429, 500, 502, 503, 529}
+
+
+def _client_for(provider: dict) -> OpenAI:
+    if provider["name"] not in _clients:
+        _clients[provider["name"]] = OpenAI(
+            base_url=provider["base_url"], api_key=provider["api_key"] or "x"
+        )
+    return _clients[provider["name"]]
 
 
 def get_client() -> OpenAI:
-    global _client
-    if _client is None:
-        _client = OpenAI(base_url=BASE_URL, api_key=API_KEY)
-    return _client
+    """Back-compat: the primary provider's client."""
+    return _client_for(config.PROVIDER_CHAIN[0])
+
+
+def complete(
+    messages: List[dict],
+    tools: Optional[List[dict]] = None,
+    on_event: Optional[Callable[[str], None]] = None,
+):
+    """Make one chat completion, failing over across the provider chain on rate limits.
+
+    Tries each provider in config.PROVIDER_CHAIN; on a 429 / quota / 5xx / connection
+    error it moves to the next provider. Raises if all providers are exhausted, or
+    immediately on a non-retryable error (e.g. a 400 bad request).
+    """
+    chain = config.PROVIDER_CHAIN
+    last_err: Optional[Exception] = None
+    for i, provider in enumerate(chain):
+        try:
+            return _client_for(provider).chat.completions.create(
+                model=provider["model"],
+                messages=messages,
+                tools=tools or None,
+                max_tokens=config.MAX_TOKENS,
+            )
+        except Exception as exc:  # noqa: BLE001 — classify below
+            last_err = exc
+            status = getattr(exc, "status_code", None)
+            retryable = isinstance(
+                exc, (openai.RateLimitError, openai.APIConnectionError, openai.InternalServerError)
+            ) or (status in _RETRYABLE_STATUS)
+            if not retryable:
+                raise
+            if i + 1 < len(chain):
+                if on_event:
+                    on_event(f"[{provider['name']} unavailable -> switching to {chain[i + 1]['name']}]")
+                continue
+            raise
+    if last_err:
+        raise last_err
+    raise RuntimeError("No providers configured.")
 
 
 def chat_loop(
@@ -35,22 +83,16 @@ def chat_loop(
     tools: Optional[List[dict]] = None,
     tool_executor: Optional[Callable[[str, dict], str]] = None,
     on_event: Optional[Callable[[str], None]] = None,
-    model: str = MODEL,
 ) -> str:
     """Run a function-calling loop until the model returns a plain answer.
 
     `tool_executor(name, args) -> str` is called for each tool the model invokes.
-    Returns the model's final text content.
+    Returns the model's final text content. Failover across providers is automatic.
     """
     convo: List[dict] = [{"role": "system", "content": system}] + list(messages)
 
     while True:
-        response = get_client().chat.completions.create(
-            model=model,
-            messages=convo,
-            tools=tools or None,
-            max_tokens=MAX_TOKENS,
-        )
+        response = complete(convo, tools=tools, on_event=on_event)
         msg = response.choices[0].message
 
         if not msg.tool_calls:
@@ -81,7 +123,6 @@ class Specialist:
     tools: List[dict] = field(default_factory=list)
     # Executes this specialist's own tools: (name, args) -> result string.
     tool_executor: Optional[Callable[[str, dict], str]] = None
-    model: str = MODEL
     on_event: Optional[Callable[[str], None]] = None
 
     def _emit(self, text: str) -> None:
@@ -99,7 +140,6 @@ class Specialist:
             tools=self.tools or None,
             tool_executor=self.tool_executor,
             on_event=self.on_event,
-            model=self.model,
         )
 
         self._emit(f"[{self.name}] done.")
