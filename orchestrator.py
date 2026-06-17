@@ -144,6 +144,7 @@ def coordinate(
     on_event: Optional[Callable[[str], None]] = None,
     doc_context: str = "",
     attachments: Optional[List[dict]] = None,
+    language: str = "en",
 ) -> str:
     """Run the full coordinator loop for one user request.
 
@@ -152,6 +153,10 @@ def coordinate(
     `attachments` — OpenAI-style image content parts (for multimodal requests).
     """
     tools = _build_tools()
+
+    system = _build_system()
+    if language and language != "en":
+        system += f"\n\nIMPORTANT: The user has selected their language as '{language}'. Reply in that language unless they write to you in a different one."
 
     preamble_parts = [f"What you remember:\n{memory_store.render()}",
                       f"Current to-do list:\n{render_todos()}"]
@@ -174,7 +179,7 @@ def coordinate(
         on_event("[coordinator] thinking...")
 
     return chat_loop(
-        system=_build_system(),
+        system=system,
         messages=messages,
         tools=tools,
         tool_executor=lambda name, args: _run_tool(name, args, on_event),

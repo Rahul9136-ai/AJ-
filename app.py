@@ -31,7 +31,7 @@ def _html(markup: str) -> str:
     return " ".join(line.strip() for line in markup.splitlines() if line.strip())
 
 
-def browser_speak(text: str, hint: str = "", rate: float = 0.95, pitch: float = 1.2) -> None:
+def browser_speak(text: str, hint: str = "", rate: float = 0.95, pitch: float = 1.2, lang: str = "en-US") -> None:
     """Speak text via the browser's Web Speech API.
 
     `hint` — substring of a preferred voice name (e.g. "aria", "zira"). If empty or
@@ -64,7 +64,7 @@ def browser_speak(text: str, hint: str = "", rate: float = 0.95, pitch: float = 
                 const v = pick(voices);
                 const u = new SpeechSynthesisUtterance(text);
                 if (v) u.voice = v;
-                u.lang = (v && v.lang) || 'en-US';
+                u.lang = '{lang}' || (v && v.lang) || 'en-US';
                 u.rate = {float(rate)}; u.pitch = {float(pitch)};
                 synth.cancel(); synth.speak(u);
                 return true;
@@ -78,7 +78,7 @@ def browser_speak(text: str, hint: str = "", rate: float = 0.95, pitch: float = 
     )
 
 
-def voice_widget(silence_ms: int = 900) -> None:
+def voice_widget(silence_ms: int = 900, lang: str = "en-US") -> None:
     """Hands-free voice input.
 
     One tap starts the browser's speech recognizer. It auto-stops after `silence_ms`
@@ -124,7 +124,7 @@ def voice_widget(silence_ms: int = 900) -> None:
             let rec = null, finalText = '', timer = null;
             btn.addEventListener('click', function() {{
                 if (rec) {{ rec.stop(); return; }}
-                rec = new SR(); rec.lang = 'en-US'; rec.interimResults = true; rec.continuous = true;
+                rec = new SR(); rec.lang = '{lang}'; rec.interimResults = true; rec.continuous = true;
                 finalText = '';
                 rec.onstart = function() {{ btn.classList.add('live'); btn.textContent = '⏹ Listening… (tap to stop)'; stat.textContent = ''; }};
                 rec.onresult = function(e) {{
@@ -159,6 +159,7 @@ VOICE_OPTIONS = {
     "Jenny — natural, warm (Edge)": "jenny",
     "Zira — clear (Windows)": "zira",
     "Hazel — UK female (Windows)": "hazel",
+    "Google US English Female": "google us english female",
     "Google UK English Female": "google uk english female",
     "Samantha": "samantha",
 }
@@ -308,13 +309,36 @@ st.markdown(
 )
 
 # --- Sidebar --------------------------------------------------------------- #
+LANGUAGES = {
+    "🇺🇸 English (US)": ("en-US", "en"),
+    "🇮🇳 Hindi":      ("hi-IN", "hi"),
+    "🇪🇸 Spanish":    ("es-ES", "es"),
+    "🇫🇷 French":     ("fr-FR", "fr"),
+    "🇩🇪 German":     ("de-DE", "de"),
+    "🇸🇦 Arabic":     ("ar-SA", "ar"),
+    "🇯🇵 Japanese":   ("ja-JP", "ja"),
+    "🇨🇳 Chinese":    ("zh-CN", "zh"),
+    "🇵🇹 Portuguese": ("pt-BR", "pt"),
+    "🇷🇺 Russian":    ("ru-RU", "ru"),
+}
+
 with st.sidebar:
     if config.APP_PASSWORD and st.session_state.get("authed"):
         if st.button("🔒 Lock AJ", use_container_width=True):
             st.session_state["authed"] = False
             st.rerun()
 
-    st.markdown('<div class="side-h">AJ\'s Team</div>', unsafe_allow_html=True)
+    # --- Language selector -------------------------------------------------- #
+    st.markdown('<div class="side-h">🌐 Language</div>', unsafe_allow_html=True)
+    lang_label = st.selectbox(
+        "AJ replies in",
+        list(LANGUAGES),
+        index=0,
+        label_visibility="collapsed",
+    )
+    lang_voice_code, lang_short = LANGUAGES[lang_label]
+
+    st.markdown('<div class="side-h" style="margin-top:1rem">AJ\'s Team</div>', unsafe_allow_html=True)
     for name, spec in SPECIALISTS.items():
         meta = AGENT_META.get(name, {"icon": "•", "label": name, "color": "#7c5cff"})
         desc = spec.description.split(".")[0] + "."
@@ -342,7 +366,7 @@ with st.sidebar:
     if st.button("🔊 Test voice", use_container_width=True):
         browser_speak(
             "Hi, I'm AJ from Purvi Technologies. How can I help you today?",
-            voice_hint, voice_rate, voice_pitch,
+            voice_hint, voice_rate, voice_pitch, lang=lang_voice_code,
         )
     voice_silence = st.slider("Auto-stop after silence (sec)", 0.4, 2.5, 0.8, 0.1)
 
@@ -412,7 +436,7 @@ uploaded = st.file_uploader(
 )
 
 # Hands-free voice: tap once, speak, auto-stops on silence and submits.
-voice_widget(int(voice_silence * 1000))
+voice_widget(int(voice_silence * 1000), lang=lang_voice_code)
 
 typed = st.chat_input("Ask AJ anything — type, or tap 🎤 above to speak…")
 if typed:
@@ -452,6 +476,7 @@ if prompt:
                 on_event=on_event,
                 doc_context=doc_context,
                 attachments=attachments or None,
+                language=lang_short,
             )
         except openai.RateLimitError:
             ok = False
@@ -477,7 +502,7 @@ if prompt:
         st.markdown(answer)
 
         if ok and speak_replies:
-            browser_speak(answer, voice_hint, voice_rate, voice_pitch)
+            browser_speak(answer, voice_hint, voice_rate, voice_pitch, lang=lang_voice_code)
 
     st.session_state.history.append({"role": "user", "content": prompt})
     st.session_state.history.append({"role": "assistant", "content": answer})
