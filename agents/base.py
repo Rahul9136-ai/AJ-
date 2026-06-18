@@ -25,6 +25,18 @@ _clients: dict = {}
 _RETRYABLE_STATUS = {408, 409, 429, 500, 502, 503, 529}
 
 
+def _is_tool_use_failed(exc: Exception) -> bool:
+    """True for Groq/Llama's `tool_use_failed` 400 — the model emitted a malformed
+    function call. Not a real bad request; the provider just botched tool calling, so
+    we fail over (and ultimately fall back to a plain, tool-less answer)."""
+    if not isinstance(exc, openai.BadRequestError):
+        return False
+    body = getattr(exc, "body", None)
+    err = body.get("error", body) if isinstance(body, dict) else {}
+    blob = f"{(err or {}).get('code', '')} {(err or {}).get('message', '')} {exc}".lower()
+    return "tool_use_failed" in blob or "failed to call a function" in blob
+
+
 def _client_for(provider: dict) -> OpenAI:
     if provider["name"] not in _clients:
         _clients[provider["name"]] = OpenAI(
@@ -43,14 +55,17 @@ def complete(
     tools: Optional[List[dict]] = None,
     on_event: Optional[Callable[[str], None]] = None,
 ):
-    """Make one chat completion, failing over across the provider chain on rate limits.
+    """Make one chat completion, failing over across the provider chain.
 
     Tries each provider in config.PROVIDER_CHAIN; on a 429 / quota / 5xx / connection
-    error it moves to the next provider. Raises if all providers are exhausted, or
-    immediately on a non-retryable error (e.g. a 400 bad request).
+    error — or a provider botching a tool call (`tool_use_failed`) — it moves to the
+    next provider. If every provider struggles and tools were requested, it makes a
+    final pass with tools disabled so the user still gets a plain answer instead of an
+    error. Raises only on a genuine non-retryable error (e.g. a real 400 bad request).
     """
     chain = config.PROVIDER_CHAIN
     last_err: Optional[Exception] = None
+    tool_trouble = False  # a provider failed specifically on tool calling
     for i, provider in enumerate(chain):
         try:
             return _client_for(provider).chat.completions.create(
@@ -62,16 +77,37 @@ def complete(
         except Exception as exc:  # noqa: BLE001 — classify below
             last_err = exc
             status = getattr(exc, "status_code", None)
-            retryable = isinstance(
+            bad_tool = bool(tools) and _is_tool_use_failed(exc)
+            tool_trouble = tool_trouble or bad_tool
+            retryable = bad_tool or isinstance(
                 exc, (openai.RateLimitError, openai.APIConnectionError, openai.InternalServerError)
             ) or (status in _RETRYABLE_STATUS)
             if not retryable:
                 raise
             if i + 1 < len(chain):
                 if on_event:
-                    on_event(f"[{provider['name']} unavailable -> switching to {chain[i + 1]['name']}]")
+                    why = "botched a tool call" if bad_tool else "unavailable"
+                    on_event(f"[{provider['name']} {why} -> switching to {chain[i + 1]['name']}]")
                 continue
-            raise
+            break  # chain exhausted — try the tool-less fallback below
+
+    # Last resort: if the failures were about tool calling, answer without tools so
+    # the conversation still completes (graceful degradation, no crash).
+    if tools and tool_trouble:
+        if on_event:
+            on_event("[all engines struggled with tools -> answering without them]")
+        for provider in chain:
+            try:
+                return _client_for(provider).chat.completions.create(
+                    model=provider["model"],
+                    messages=messages,
+                    tools=None,
+                    max_tokens=config.MAX_TOKENS,
+                )
+            except Exception as exc:  # noqa: BLE001
+                last_err = exc
+                continue
+
     if last_err:
         raise last_err
     raise RuntimeError("No providers configured.")
