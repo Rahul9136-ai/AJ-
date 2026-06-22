@@ -354,6 +354,14 @@ AGENT_META = {
     "coding_agent": {"icon": "💻", "label": "Coding Agent", "color": "#9b8bff"},
 }
 
+# Spoken/written briefing AJ gives on login and from the "Daily briefing" button.
+BRIEFING_PROMPT = (
+    "Greet me warmly by name if you know it. Then give me a short, friendly briefing for today: "
+    "summarize my pending to-dos and what's on my plate, and suggest my top 3 priorities. "
+    "Keep it to about 4–6 short lines. If I have no tasks saved yet, welcome me and suggest a "
+    "couple of ways to get started."
+)
+
 QUICK_STARTS = [
     {"icon": "🗓️", "label": "Plan my day", "prompt": "What should I focus on today? Give me a prioritized plan."},
     {"icon": "🎯", "label": "Strategy check", "prompt": "What's the riskiest assumption in my business right now, and how do I test it?"},
@@ -520,11 +528,12 @@ with st.sidebar:
         )
     voice_silence = st.slider("Auto-stop after silence (sec)", 0.4, 2.5, 0.8, 0.1)
 
-    if st.button("🌅 Daily briefing", use_container_width=True):
-        st.session_state["pending"] = (
-            "Give me a short daily briefing: greet me, summarize my open to-dos, "
-            "and suggest today's top 3 priorities."
-        )
+    auto_brief = st.checkbox(
+        "🌅 Greet me on login", value=True,
+        help="When you log in, AJ automatically greets you and summarizes today's pending tasks.",
+    )
+    if st.button("🌅 Daily briefing now", use_container_width=True):
+        st.session_state["pending"] = BRIEFING_PROMPT
         st.rerun()
 
     # Interactive to-do board
@@ -570,6 +579,14 @@ for turn in st.session_state.history:
 
 # --- Determine the prompt (quick-start, voice, or text) -------------------- #
 prompt = st.session_state.pop("pending", None)
+
+# Auto-greeting: the first time after login, AJ proactively briefs you on today's
+# tasks — no clicking. `silent` makes it render as AJ's opener (no fake user message).
+silent = False
+if auto_brief and not st.session_state.get("greeted") and not st.session_state.history and prompt is None:
+    st.session_state["greeted"] = True
+    prompt = BRIEFING_PROMPT
+    silent = True
 
 if not st.session_state.history and prompt is None:
     st.markdown('<div class="qs-title">✨ Try one of these to get started:</div>', unsafe_allow_html=True)
@@ -617,13 +634,17 @@ if prompt:
             else:
                 doc_context += f"[{f.name}]\n{text}\n\n"
 
-    with st.chat_message("user", avatar="🧑‍💻"):
-        st.markdown(prompt)
-        if uploaded:
-            st.caption("📎 " + ", ".join(f.name for f in uploaded))
+    if not silent:
+        with st.chat_message("user", avatar="🧑‍💻"):
+            st.markdown(prompt)
+            if uploaded:
+                st.caption("📎 " + ", ".join(f.name for f in uploaded))
 
     with st.chat_message("assistant", avatar="✨"):
-        status = st.status("AJ is coordinating specialists…", expanded=True)
+        status = st.status(
+            "AJ is preparing your briefing…" if silent else "AJ is coordinating specialists…",
+            expanded=True,
+        )
 
         def on_event(msg: str) -> None:
             status.write(msg)
@@ -667,7 +688,8 @@ if prompt:
         elif ok and speak_replies:
             browser_speak(answer, voice_hint, voice_rate, voice_pitch, lang=lang_voice_code)
 
-    st.session_state.history.append({"role": "user", "content": prompt})
+    if not silent:
+        st.session_state.history.append({"role": "user", "content": prompt})
     st.session_state.history.append({"role": "assistant", "content": answer})
 
 # --- Conversation mode: continuous speak→listen loop (no clicking) ---------- #
