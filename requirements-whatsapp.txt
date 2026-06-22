@@ -1,0 +1,9 @@
+# Dependencies for the AJ WhatsApp webhook service (whatsapp_bot.py).
+# Deploy this as a separate small web app; it shares the agent code with the dashboard.
+openai>=2.0
+ddgs>=9.0
+twilio>=9.0
+fastapi>=0.110
+uvicorn[standard]>=0.29
+gunicorn>=21.0
+python-multipart>=0.0.9      # FastAPI needs this to parse Twilio's form POST

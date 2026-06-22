@@ -12,6 +12,7 @@ import json
 from typing import Callable, List, Optional
 
 import memory_store
+import whatsapp
 from agents import SPECIALISTS
 from agents.base import chat_loop
 from agents.planning_agent import add_todo, render_todos
@@ -92,6 +93,33 @@ def _build_tools() -> List[dict]:
             },
         }
     )
+    # WhatsApp sending is only offered once Twilio credentials are configured.
+    if whatsapp.configured():
+        tools.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": "send_whatsapp",
+                    "description": "Send a WhatsApp message on the founder's behalf via Twilio. "
+                    "Use when the founder explicitly asks to message someone on WhatsApp. "
+                    "Confirm the recipient number and message with the founder if unsure.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "to": {
+                                "type": "string",
+                                "description": "Recipient phone number with country code, e.g. +919876543210.",
+                            },
+                            "message": {
+                                "type": "string",
+                                "description": "The message text to send.",
+                            },
+                        },
+                        "required": ["to", "message"],
+                    },
+                },
+            }
+        )
     return tools
 
 
@@ -124,6 +152,14 @@ def _run_tool(name: str, tool_input: dict, on_event: Optional[Callable[[str], No
         if on_event:
             on_event(f"[coordinator] remembered {saved} fact(s).")
         return f"Remembered {saved} fact(s)."
+
+    if name == "send_whatsapp":
+        if on_event:
+            on_event("[coordinator] sending WhatsApp message…")
+        return whatsapp.send_whatsapp(
+            to=tool_input.get("to", ""),
+            body=tool_input.get("message", ""),
+        )
 
     # Otherwise it's a delegation tool: ask_<specialist_name>.
     specialist_name = name[len("ask_"):]

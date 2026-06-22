@@ -4,6 +4,7 @@ ddgs>=9.0
 streamlit>=1.30
 pypdf>=4.0                    # read uploaded PDFs
 reportlab>=4.0               # export replies to PDF
+twilio>=9.0                  # send WhatsApp messages (outbound)
 
 # Optional — only for the CLI voice mode (`python cli.py --voice`); not needed for
 # the web app (dashboard voice is handled in the browser). Install separately if wanted:
