@@ -157,12 +157,15 @@ def conversation_widget(
     speak_text: str = "", silence_ms: int = 900, lang: str = "en-US",
     hint: str = "", rate: float = 0.95, pitch: float = 1.2,
 ) -> None:
-    """Hands-free CONVERSATION loop — talk to AJ like a person, no clicking.
+    """Hands-free CONVERSATION loop — talk to AJ like a person.
 
-    If `speak_text` is given, AJ speaks it first; the moment it finishes, the mic
-    turns on by itself. You just talk; after a short silence it submits what you said,
-    AJ replies (spoken), and the mic re-opens. Repeats until you turn the mode off.
-    A fallback button appears only if the browser blocks auto-start.
+    First activation needs ONE tap on the big mic button — that tap is what makes the
+    browser show its "Allow microphone?" prompt (browsers refuse to start the mic
+    without a user gesture). After you allow it once, it stays hands-free: AJ speaks
+    each reply, then re-opens the mic by itself until you turn the mode off.
+
+    The speech recognizer is created from the TOP-LEVEL window so it inherits the page's
+    microphone permission (Streamlit's embedded component frames don't get mic rights).
     """
     payload = json.dumps(speak_text)
     hint_j = json.dumps(hint)
@@ -177,16 +180,20 @@ def conversation_widget(
         #cwdot.speak {{ background:#ff9a5c; animation:cwp 1.2s infinite; }}
         #cwtext {{ color:#cfd3dc; font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }}
         @keyframes cwp {{ 0%{{box-shadow:0 0 0 0 rgba(54,224,127,.5);}} 70%{{box-shadow:0 0 0 9px rgba(54,224,127,0);}} 100%{{box-shadow:0 0 0 0 rgba(54,224,127,0);}} }}
-        #cwgo {{ display:none; margin-top:8px; width:100%; padding:10px; border:none; border-radius:11px; cursor:pointer;
-            font-family:Inter,sans-serif; font-weight:700; font-size:14px; color:#fff; background:linear-gradient(90deg,#36e07f,#3ec6ff); }}
+        #cwgo {{ display:none; margin-top:10px; width:100%; padding:13px; border:none; border-radius:12px; cursor:pointer;
+            font-family:Inter,sans-serif; font-weight:700; font-size:15px; color:#fff; background:linear-gradient(90deg,#36e07f,#3ec6ff); }}
+        #cwgo:hover {{ filter:brightness(1.08); }}
         </style>
         <div id="cw">
           <div id="cwstat"><span id="cwdot"></span><span id="cwtext">Starting conversation…</span></div>
-          <button id="cwgo">🎤 Tap to continue talking</button>
+          <button id="cwgo">🎤 Tap to start talking</button>
         </div>
         <script>
         (function() {{
-            const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+            // Build the recognizer from the TOP-LEVEL window so it has mic permission.
+            const W = window.parent || window;
+            const SR = W.SpeechRecognition || W.webkitSpeechRecognition
+                     || window.SpeechRecognition || window.webkitSpeechRecognition;
             const synth = window.speechSynthesis;
             const dot = document.getElementById('cwdot');
             const txt = document.getElementById('cwtext');
@@ -194,9 +201,11 @@ def conversation_widget(
             const pdoc = window.parent.document;
             const speakText = {payload};
             const hint = {hint_j};
-            if (!SR) {{ txt.textContent = 'Voice needs Chrome or Edge.'; return; }}
+            if (!SR) {{ setState('', 'Voice needs Chrome or Edge.'); return; }}
 
             function setState(cls, label) {{ dot.className = cls; txt.textContent = label; }}
+            function showBtn(label) {{ go.textContent = '🎤 ' + label; go.style.display = 'block'; }}
+            function hideBtn() {{ go.style.display = 'none'; }}
 
             function submitText(text) {{
                 const ta = pdoc.querySelector('textarea[data-testid="stChatInputTextArea"]')
@@ -219,7 +228,7 @@ def conversation_widget(
                 try {{
                     rec = new SR(); rec.lang = '{lang}'; rec.interimResults = true; rec.continuous = true;
                     finalText = '';
-                    rec.onstart = function() {{ setState('listen', '🎧 Listening… just talk'); go.style.display='none'; }};
+                    rec.onstart = function() {{ W.__ajMicOk = true; hideBtn(); setState('listen', '🎧 Listening… just talk'); }};
                     rec.onresult = function(e) {{
                         let interim = '';
                         for (let i=e.resultIndex; i<e.results.length; i++) {{
@@ -232,20 +241,24 @@ def conversation_widget(
                     }};
                     rec.onerror = function(e) {{
                         if (e.error === 'no-speech' || e.error === 'aborted') return;
-                        setState('', 'Mic paused — tap to continue.'); go.style.display='block';
+                        rec = null;
+                        if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {{
+                            setState('', 'Mic blocked. Click the 🔒/camera icon in the address bar → Allow, then tap below.');
+                        }} else {{ setState('', 'Mic error: ' + e.error + '. Tap to retry.'); }}
+                        showBtn('Tap to talk');
                     }};
                     rec.onend = function() {{
                         if (timer) clearTimeout(timer);
                         const t = (finalText || '').trim();
                         rec = null;
                         if (t) {{ setState('', '💬 You: ' + t); submitText(t); }}
-                        else {{ setState('', "Didn't catch that — tap to talk."); go.style.display='block'; }}
+                        else {{ setState('', "Didn't catch that — tap to talk."); showBtn('Tap to talk'); }}
                     }};
                     rec.start();
-                }} catch (err) {{ rec = null; setState('', 'Tap to start talking.'); go.style.display='block'; }}
+                }} catch (err) {{ rec = null; setState('', 'Tap the button to start talking.'); showBtn('Start talking'); }}
             }}
 
-            go.addEventListener('click', function() {{ synth.cancel(); startListening(); }});
+            go.addEventListener('click', function() {{ try {{ synth.cancel(); }} catch(e) {{}} startListening(); }});
 
             const prefer = [/aria/i,/jenny/i,/zira/i,/hazel/i,/michelle/i,/female/i,/samantha/i,/google us english/i,/google uk english female/i];
             function pickVoice(vs) {{
@@ -254,29 +267,34 @@ def conversation_widget(
                 return vs.find(v=>/^en/i.test(v.lang)) || vs[0];
             }}
             function speakThenListen() {{
-                if (!speakText) {{ startListening(); return; }}
-                setState('speak', '🗣️ AJ is speaking…');
-                function doSpeak() {{
-                    const vs = synth.getVoices(); if (!vs.length) return false;
-                    const u = new SpeechSynthesisUtterance(speakText);
-                    const v = pickVoice(vs); if (v) u.voice = v;
-                    u.lang = '{lang}' || 'en-US'; u.rate = {float(rate)}; u.pitch = {float(pitch)};
-                    u.onend = function() {{ startListening(); }};
-                    u.onerror = function() {{ startListening(); }};
-                    synth.cancel(); synth.speak(u);
-                    return true;
+                if (speakText) {{
+                    setState('speak', '🗣️ AJ is speaking…');
+                    function doSpeak() {{
+                        const vs = synth.getVoices(); if (!vs.length) return false;
+                        const u = new SpeechSynthesisUtterance(speakText);
+                        const v = pickVoice(vs); if (v) u.voice = v;
+                        u.lang = '{lang}' || 'en-US'; u.rate = {float(rate)}; u.pitch = {float(pitch)};
+                        u.onend = function() {{ startListening(); }};   // permission already granted mid-chat
+                        u.onerror = function() {{ startListening(); }};
+                        synth.cancel(); synth.speak(u);
+                        return true;
+                    }}
+                    if (!doSpeak()) {{
+                        synth.onvoiceschanged = function() {{ doSpeak(); synth.onvoiceschanged = null; }};
+                        setTimeout(function() {{ if (!rec) startListening(); }}, 4000);
+                    }}
+                    return;
                 }}
-                if (!doSpeak()) {{
-                    synth.onvoiceschanged = function() {{ doSpeak(); synth.onvoiceschanged = null; }};
-                    setTimeout(function() {{ if (!rec) startListening(); }}, 4000);  // safety net
-                }}
+                // No reply to speak — this is the start (or an idle rerun).
+                if (W.__ajMicOk) {{ startListening(); }}      // already allowed → just listen
+                else {{ setState('', 'Tap below, then start talking — your browser will ask to use the mic.'); showBtn('Start talking'); }}
             }}
 
             setTimeout(speakThenListen, 350);  // let the parent DOM settle after rerun
         }})();
         </script>
         """,
-        height=110,
+        height=140,
     )
 
 
@@ -572,7 +590,13 @@ uploaded = st.file_uploader(
 if not conv_mode:
     voice_widget(int(voice_silence * 1000), lang=lang_voice_code)
 else:
-    st.caption("🗣️ **Conversation mode is on** — just talk; AJ listens, replies aloud, then listens again. Uncheck it in the sidebar to stop.")
+    st.info(
+        "🗣️ **Conversation mode is on.** Scroll down and tap the green **🎤 Start talking** "
+        "button once — your browser (Edge/Chrome) will ask to use the microphone, so click "
+        "**Allow**. After that it's hands-free: just talk, and AJ replies aloud and listens again. "
+        "Uncheck the toggle in the sidebar to stop.",
+        icon="🎤",
+    )
 
 typed = st.chat_input("Ask AJ anything — type, or tap 🎤 above to speak…")
 if typed:
