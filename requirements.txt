@@ -6,6 +6,13 @@ pypdf>=4.0                    # read uploaded PDFs
 reportlab>=4.0               # export replies to PDF
 twilio>=9.0                  # send WhatsApp messages (outbound)
 
+# WhatsApp webhook service (whatsapp_bot.py) — installed in both apps so one build
+# works for the dashboard and the webhook (each picks its own startup command).
+fastapi>=0.110
+uvicorn[standard]>=0.29
+gunicorn>=21.0
+python-multipart>=0.0.9
+
 # Optional — only for the CLI voice mode (`python cli.py --voice`); not needed for
 # the web app (dashboard voice is handled in the browser). Install separately if wanted:
 #   pip install SpeechRecognition pyttsx3 pyaudio
