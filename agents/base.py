@@ -183,11 +183,13 @@ class Specialist:
 
     def as_tool(self) -> dict:
         """The function-tool definition the coordinator uses to delegate here."""
+        # First sentence only — enough for routing, far fewer tokens per request.
+        short_desc = self.description.split(".")[0].strip() + "."
         return {
             "type": "function",
             "function": {
                 "name": f"ask_{self.name}",
-                "description": self.description,
+                "description": short_desc,
                 "parameters": {
                     "type": "object",
                     "properties": {

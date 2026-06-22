@@ -194,13 +194,21 @@ def coordinate(
     if language and language != "en":
         system += f"\n\nIMPORTANT: The user has selected their language as '{language}'. Reply in that language unless they write to you in a different one."
 
-    preamble_parts = [f"What you remember:\n{memory_store.render()}",
-                      f"Current to-do list:\n{render_todos()}"]
+    # Keep the request lean: only include memory / to-dos when they actually have
+    # content (skip the empty placeholders) and cap their length. Smaller requests are
+    # less likely to hit a provider's per-minute token limit.
+    preamble_parts = []
+    mem = memory_store.render()
+    if "nothing remembered" not in mem:
+        preamble_parts.append(f"What you remember:\n{mem[:1000]}")
+    todos = render_todos()
+    if "no open tasks" not in todos:
+        preamble_parts.append(f"Current to-do list:\n{todos[:1000]}")
     if doc_context:
         preamble_parts.append(f"Attached document:\n{doc_context}")
     preamble = "\n\n".join(preamble_parts)
 
-    text = f"{preamble}\n\n---\n\nRequest: {request}"
+    text = f"{preamble}\n\n---\n\nRequest: {request}" if preamble else request
 
     # Multimodal user turn when images are attached; plain text otherwise.
     if attachments:
