@@ -153,6 +153,133 @@ def voice_widget(silence_ms: int = 900, lang: str = "en-US") -> None:
     )
 
 
+def conversation_widget(
+    speak_text: str = "", silence_ms: int = 900, lang: str = "en-US",
+    hint: str = "", rate: float = 0.95, pitch: float = 1.2,
+) -> None:
+    """Hands-free CONVERSATION loop — talk to AJ like a person, no clicking.
+
+    If `speak_text` is given, AJ speaks it first; the moment it finishes, the mic
+    turns on by itself. You just talk; after a short silence it submits what you said,
+    AJ replies (spoken), and the mic re-opens. Repeats until you turn the mode off.
+    A fallback button appears only if the browser blocks auto-start.
+    """
+    payload = json.dumps(speak_text)
+    hint_j = json.dumps(hint)
+    components.html(
+        f"""
+        <style>
+        #cw {{ font-family: Inter, sans-serif; }}
+        #cwstat {{ display:flex; align-items:center; gap:10px; padding:11px 14px; border-radius:12px;
+            background:#15171f; border:1px solid #262a36; color:#e6e8ee; font-weight:600; font-size:14px; }}
+        #cwdot {{ width:12px; height:12px; border-radius:50%; background:#3ec6ff; flex:none; }}
+        #cwdot.listen {{ background:#36e07f; animation:cwp 1.2s infinite; }}
+        #cwdot.speak {{ background:#ff9a5c; animation:cwp 1.2s infinite; }}
+        #cwtext {{ color:#cfd3dc; font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }}
+        @keyframes cwp {{ 0%{{box-shadow:0 0 0 0 rgba(54,224,127,.5);}} 70%{{box-shadow:0 0 0 9px rgba(54,224,127,0);}} 100%{{box-shadow:0 0 0 0 rgba(54,224,127,0);}} }}
+        #cwgo {{ display:none; margin-top:8px; width:100%; padding:10px; border:none; border-radius:11px; cursor:pointer;
+            font-family:Inter,sans-serif; font-weight:700; font-size:14px; color:#fff; background:linear-gradient(90deg,#36e07f,#3ec6ff); }}
+        </style>
+        <div id="cw">
+          <div id="cwstat"><span id="cwdot"></span><span id="cwtext">Starting conversation…</span></div>
+          <button id="cwgo">🎤 Tap to continue talking</button>
+        </div>
+        <script>
+        (function() {{
+            const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+            const synth = window.speechSynthesis;
+            const dot = document.getElementById('cwdot');
+            const txt = document.getElementById('cwtext');
+            const go  = document.getElementById('cwgo');
+            const pdoc = window.parent.document;
+            const speakText = {payload};
+            const hint = {hint_j};
+            if (!SR) {{ txt.textContent = 'Voice needs Chrome or Edge.'; return; }}
+
+            function setState(cls, label) {{ dot.className = cls; txt.textContent = label; }}
+
+            function submitText(text) {{
+                const ta = pdoc.querySelector('textarea[data-testid="stChatInputTextArea"]')
+                         || pdoc.querySelector('[data-testid="stChatInput"] textarea')
+                         || pdoc.querySelector('textarea');
+                if (!ta) return;
+                const setter = Object.getOwnPropertyDescriptor(window.parent.HTMLTextAreaElement.prototype, 'value').set;
+                setter.call(ta, text);
+                ta.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                setTimeout(function() {{
+                    const sb = pdoc.querySelector('button[data-testid="stChatInputSubmitButton"]');
+                    if (sb) {{ sb.click(); }}
+                    else {{ ta.dispatchEvent(new KeyboardEvent('keydown', {{ key:'Enter', keyCode:13, which:13, bubbles:true }})); }}
+                }}, 60);
+            }}
+
+            let rec = null, finalText = '', timer = null;
+            function startListening() {{
+                if (rec) return;                       // already listening
+                try {{
+                    rec = new SR(); rec.lang = '{lang}'; rec.interimResults = true; rec.continuous = true;
+                    finalText = '';
+                    rec.onstart = function() {{ setState('listen', '🎧 Listening… just talk'); go.style.display='none'; }};
+                    rec.onresult = function(e) {{
+                        let interim = '';
+                        for (let i=e.resultIndex; i<e.results.length; i++) {{
+                            if (e.results[i].isFinal) finalText += e.results[i][0].transcript;
+                            else interim += e.results[i][0].transcript;
+                        }}
+                        setState('listen', (finalText + ' ' + interim).trim() || '🎧 Listening… just talk');
+                        if (timer) clearTimeout(timer);
+                        timer = setTimeout(function() {{ if (rec) rec.stop(); }}, {silence_ms});
+                    }};
+                    rec.onerror = function(e) {{
+                        if (e.error === 'no-speech' || e.error === 'aborted') return;
+                        setState('', 'Mic paused — tap to continue.'); go.style.display='block';
+                    }};
+                    rec.onend = function() {{
+                        if (timer) clearTimeout(timer);
+                        const t = (finalText || '').trim();
+                        rec = null;
+                        if (t) {{ setState('', '💬 You: ' + t); submitText(t); }}
+                        else {{ setState('', "Didn't catch that — tap to talk."); go.style.display='block'; }}
+                    }};
+                    rec.start();
+                }} catch (err) {{ rec = null; setState('', 'Tap to start talking.'); go.style.display='block'; }}
+            }}
+
+            go.addEventListener('click', function() {{ synth.cancel(); startListening(); }});
+
+            const prefer = [/aria/i,/jenny/i,/zira/i,/hazel/i,/michelle/i,/female/i,/samantha/i,/google us english/i,/google uk english female/i];
+            function pickVoice(vs) {{
+                if (hint) {{ const m = vs.find(v=>v.name.toLowerCase().includes(hint.toLowerCase())); if (m) return m; }}
+                for (const re of prefer) {{ const m = vs.find(v=>re.test(v.name)); if (m) return m; }}
+                return vs.find(v=>/^en/i.test(v.lang)) || vs[0];
+            }}
+            function speakThenListen() {{
+                if (!speakText) {{ startListening(); return; }}
+                setState('speak', '🗣️ AJ is speaking…');
+                function doSpeak() {{
+                    const vs = synth.getVoices(); if (!vs.length) return false;
+                    const u = new SpeechSynthesisUtterance(speakText);
+                    const v = pickVoice(vs); if (v) u.voice = v;
+                    u.lang = '{lang}' || 'en-US'; u.rate = {float(rate)}; u.pitch = {float(pitch)};
+                    u.onend = function() {{ startListening(); }};
+                    u.onerror = function() {{ startListening(); }};
+                    synth.cancel(); synth.speak(u);
+                    return true;
+                }}
+                if (!doSpeak()) {{
+                    synth.onvoiceschanged = function() {{ doSpeak(); synth.onvoiceschanged = null; }};
+                    setTimeout(function() {{ if (!rec) startListening(); }}, 4000);  // safety net
+                }}
+            }}
+
+            setTimeout(speakThenListen, 350);  // let the parent DOM settle after rerun
+        }})();
+        </script>
+        """,
+        height=110,
+    )
+
+
 VOICE_OPTIONS = {
     "Auto — best female": "",
     "Aria — natural, soft (Edge)": "aria",
@@ -358,7 +485,12 @@ with st.sidebar:
         )
 
     st.markdown('<div class="side-h" style="margin-top:1rem">🎙️ Voice</div>', unsafe_allow_html=True)
-    speak_replies = st.checkbox("🔊 Speak replies aloud", value=True)
+    conv_mode = st.checkbox(
+        "🗣️ Conversation mode (hands-free)", value=False,
+        help="Talk to AJ like a person — it listens, replies aloud, then listens again. "
+             "No clicking. Turn off to stop. Needs Chrome or Edge + mic permission.",
+    )
+    speak_replies = st.checkbox("🔊 Speak replies aloud", value=True, disabled=conv_mode)
     voice_label = st.selectbox("AJ's voice", list(VOICE_OPTIONS), index=1)
     voice_hint = VOICE_OPTIONS[voice_label]
     voice_pitch = st.slider("Softness (pitch)", 0.8, 1.8, 1.25, 0.05)
@@ -436,7 +568,11 @@ uploaded = st.file_uploader(
 )
 
 # Hands-free voice: tap once, speak, auto-stops on silence and submits.
-voice_widget(int(voice_silence * 1000), lang=lang_voice_code)
+# In conversation mode the continuous loop (rendered at the bottom) takes over instead.
+if not conv_mode:
+    voice_widget(int(voice_silence * 1000), lang=lang_voice_code)
+else:
+    st.caption("🗣️ **Conversation mode is on** — just talk; AJ listens, replies aloud, then listens again. Uncheck it in the sidebar to stop.")
 
 typed = st.chat_input("Ask AJ anything — type, or tap 🎤 above to speak…")
 if typed:
@@ -501,11 +637,25 @@ if prompt:
         )
         st.markdown(answer)
 
-        if ok and speak_replies:
+        if ok and conv_mode:
+            # Hand the reply to the conversation loop (it speaks, then re-opens the mic).
+            st.session_state["conv_speak"] = answer
+        elif ok and speak_replies:
             browser_speak(answer, voice_hint, voice_rate, voice_pitch, lang=lang_voice_code)
 
     st.session_state.history.append({"role": "user", "content": prompt})
     st.session_state.history.append({"role": "assistant", "content": answer})
+
+# --- Conversation mode: continuous speak→listen loop (no clicking) ---------- #
+if conv_mode:
+    conversation_widget(
+        speak_text=st.session_state.pop("conv_speak", ""),
+        silence_ms=int(voice_silence * 1000),
+        lang=lang_voice_code,
+        hint=voice_hint,
+        rate=voice_rate,
+        pitch=voice_pitch,
+    )
 
 # --- Export last reply ----------------------------------------------------- #
 if st.session_state.history and st.session_state.history[-1]["role"] == "assistant":
