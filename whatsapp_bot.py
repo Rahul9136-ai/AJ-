@@ -58,6 +58,11 @@ async def incoming(Body: str = Form(default=""), From: str = Form(default="")) -
     except Exception:  # noqa: BLE001 — never 500 back to Twilio; reply gracefully
         return _twiml("Sorry, I hit a snag just now. Please try again in a moment.")
 
+    # Small models sometimes finish a tool action (e.g. saving a memory) with no closing
+    # text — don't send a blank WhatsApp reply.
+    if not (reply or "").strip():
+        reply = "Got it. ✅"
+
     history = (history + [
         {"role": "user", "content": text},
         {"role": "assistant", "content": reply},
