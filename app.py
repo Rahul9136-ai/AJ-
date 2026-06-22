@@ -50,13 +50,18 @@ def browser_speak(text: str, hint: str = "", rate: float = 0.95, pitch: float = 
                             /samantha/i, /susan/i, /eva/i, /libby/i, /sonia/i,
                             /google uk english female/i, /google us english/i];
             function pick(voices) {{
+                // Only consider voices in the target language (e.g. English) so we never
+                // fall back to a Russian/other system voice that mangles the accent.
+                const fam = '{lang}'.slice(0, 2).toLowerCase();
+                const inLang = voices.filter(v => (v.lang || '').toLowerCase().slice(0, 2) === fam);
+                const pool = inLang.length ? inLang : voices;
                 if (hint) {{
                     const h = hint.toLowerCase();
-                    const m = voices.find(v => v.name.toLowerCase().includes(h));
+                    const m = pool.find(v => v.name.toLowerCase().includes(h));
                     if (m) return m;
                 }}
-                for (const re of prefer) {{ const m = voices.find(v => re.test(v.name)); if (m) return m; }}
-                return voices.find(v => /^en/i.test(v.lang)) || voices[0];
+                for (const re of prefer) {{ const m = pool.find(v => re.test(v.name)); if (m) return m; }}
+                return pool.find(v => /en[-_]us/i.test(v.lang)) || pool.find(v => /en[-_]gb/i.test(v.lang)) || pool[0];
             }}
             function speak() {{
                 const voices = synth.getVoices();
@@ -64,7 +69,7 @@ def browser_speak(text: str, hint: str = "", rate: float = 0.95, pitch: float = 
                 const v = pick(voices);
                 const u = new SpeechSynthesisUtterance(text);
                 if (v) u.voice = v;
-                u.lang = '{lang}' || (v && v.lang) || 'en-US';
+                u.lang = (v && v.lang) || '{lang}' || 'en-US';
                 u.rate = {float(rate)}; u.pitch = {float(pitch)};
                 synth.cancel(); synth.speak(u);
                 return true;
@@ -262,9 +267,14 @@ def conversation_widget(
 
             const prefer = [/aria/i,/jenny/i,/zira/i,/hazel/i,/michelle/i,/female/i,/samantha/i,/google us english/i,/google uk english female/i];
             function pickVoice(vs) {{
-                if (hint) {{ const m = vs.find(v=>v.name.toLowerCase().includes(hint.toLowerCase())); if (m) return m; }}
-                for (const re of prefer) {{ const m = vs.find(v=>re.test(v.name)); if (m) return m; }}
-                return vs.find(v=>/^en/i.test(v.lang)) || vs[0];
+                // Restrict to the target language family so the accent never drifts to a
+                // non-English system voice (e.g. Russian) on the user's machine.
+                const fam = '{lang}'.slice(0, 2).toLowerCase();
+                const inLang = vs.filter(v => (v.lang || '').toLowerCase().slice(0, 2) === fam);
+                const pool = inLang.length ? inLang : vs;
+                if (hint) {{ const m = pool.find(v=>v.name.toLowerCase().includes(hint.toLowerCase())); if (m) return m; }}
+                for (const re of prefer) {{ const m = pool.find(v=>re.test(v.name)); if (m) return m; }}
+                return pool.find(v=>/en[-_]us/i.test(v.lang)) || pool.find(v=>/en[-_]gb/i.test(v.lang)) || pool[0];
             }}
             function speakThenListen() {{
                 if (speakText) {{
@@ -273,7 +283,7 @@ def conversation_widget(
                         const vs = synth.getVoices(); if (!vs.length) return false;
                         const u = new SpeechSynthesisUtterance(speakText);
                         const v = pickVoice(vs); if (v) u.voice = v;
-                        u.lang = '{lang}' || 'en-US'; u.rate = {float(rate)}; u.pitch = {float(pitch)};
+                        u.lang = (v && v.lang) || '{lang}' || 'en-US'; u.rate = {float(rate)}; u.pitch = {float(pitch)};
                         u.onend = function() {{ startListening(); }};   // permission already granted mid-chat
                         u.onerror = function() {{ startListening(); }};
                         synth.cancel(); synth.speak(u);
